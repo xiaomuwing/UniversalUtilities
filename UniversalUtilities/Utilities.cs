@@ -19,33 +19,20 @@ namespace UniversalUtilities
     public static class Utilities
     {
         static readonly Random random = new();
-        /// <summary>
+                /// <summary>
         /// 求若干INT数值的最大公约数
         /// </summary>
         /// <param name="numbers"></param>
         /// <returns></returns>
         public static int MaxGYS(List<int> numbers)
         {
-            int minNumber = numbers.Min();
-            int gys = 1;
-            for (int i = 1; i <= minNumber; i++)
-            {
-                for (int j = 0; j < numbers.Count; j++)
-                {
-                    if (numbers[j] % i != 0)
-                    {
-                        break;
-                    }
-                    else
-                    {
-                        if (numbers.Count == j + 1)
-                        {
-                            gys = i;
-                        }
-                    }
-                }
-            }
-            return gys;
+            if (numbers == null || numbers.Count == 0) return 0;
+            return numbers.Aggregate(GCD);
+        }
+        private static int GCD(int a, int b)
+        {
+            while (b != 0) { int t = b; b = a % b; a = t; }
+            return a;
         }
         /// <summary>   
         /// CopyMemoryEx   
