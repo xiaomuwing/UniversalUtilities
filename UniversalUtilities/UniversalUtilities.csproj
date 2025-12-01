@@ -84,6 +84,7 @@
   <ItemGroup>
     <Compile Include="ArrayManipulator.cs" />
     <Compile Include="CpuTopology.cs" />
+    <Compile Include="CrossPlatformTimer.cs" />
     <Compile Include="CustomDataGridView.cs">
       <SubType>Component</SubType>
     </Compile>
