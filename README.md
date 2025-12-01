@@ -8,9 +8,10 @@
 7. FTPClient：使用FluentFTP的FTP客户端实现
 8. GaussianFilter：高斯滤波
 9. HighResTimer：亚毫秒级WINDOWS下的定时器，高精度不漂移，费CPU
-10. Log：超轻量级日志文件
-11. MMTimer：WINDOWS下的多媒体定时器，秒级精度
-12. ModbusClient_TCP：TCP连接的Modbus客户端. 只支持读取保持寄存器
-13. ModbusServer：TCP连接的Modbus服务端
-14. SavitzkyGolayFilter：SavitzkyGolay滤波
-15. Utilities：静态类功能性函数
+10. CrossPlatformTimer：跨平台（linux/windows）高精度定时器。
+11. Log：超轻量级日志文件
+12. MMTimer：WINDOWS下的多媒体定时器，秒级精度
+13. ModbusClient_TCP：TCP连接的Modbus客户端. 只支持读取保持寄存器
+14. ModbusServer：TCP连接的Modbus服务端
+15. SavitzkyGolayFilter：SavitzkyGolay滤波
+16. Utilities：静态类功能性函数
