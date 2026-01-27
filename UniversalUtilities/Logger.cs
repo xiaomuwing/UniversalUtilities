@@ -9,96 +9,92 @@ using System.Threading.Tasks;
 
 namespace UniversalUtilities
 {
-    public static class Log
+       public static class Log
     {
-        static readonly ConcurrentQueue<string> logQueue = new ConcurrentQueue<string>();
-        static readonly Task writeTask = default;
-        static readonly ManualResetEvent pause = new ManualResetEvent(false);
-        static string logPath;
+        private struct LogMessage
+        {
+            public string Directory;
+            public string PreText;
+            public string Content;
+        }
+        private static readonly BlockingCollection<LogMessage> myLogQueue = new();        // 使用阻塞集合处理并发
+        private static readonly Regex _noRegex = new(@"(?<=\()(\d+)(?=\))", RegexOptions.Compiled);        // 预编译正则
+        private const long MAX_FILE_SIZE = 1 * 1024 * 1024; // 1MB 阈值
         static Log()
         {
-            writeTask = new Task((object obj) =>
-            {
-                while (true)
-                {
-                    pause.WaitOne();
-                    pause.Reset();
-                    List<string> temp = new List<string>();
-                    foreach (string str in logQueue)
-                    {
-                        temp.Add(str);
-                        logQueue.TryDequeue(out string val);
-                    }
-                    foreach (string str in temp)
-                    {
-                        WriteText(str);
-                    }
-                }
-            }, null, TaskCreationOptions.LongRunning);
-            writeTask.Start();
+            Task.Factory.StartNew(ProcessQueue, TaskCreationOptions.LongRunning); // 开启后台消费任务
         }
         public static void WriteLog(string infoData, string source = "", string preText = "")
         {
-            Console.WriteLine(DateTime.Now.ToString("HH:mm:ss.fff") + ":" + infoData);
             WriteLog(string.Empty, preText, infoData, source);
         }
         public static void WriteLog(string customDirectory, string preText, string infoData, string source)
         {
-            logPath = GetLogPath(customDirectory, preText);
-            string logContent = string.Concat("[", DateTime.Now.ToString("yyyy-MM-dd HH:mm:ss.fff"), "]", source, ": ", infoData);
-            logQueue.Enqueue(logContent);
-            pause.Set();
+            string logContent = $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss.fff}]{source}: {infoData}"; // 封装日志上下文，避免全局变量竞争
+            myLogQueue.Add(new LogMessage {Directory = customDirectory, PreText = preText, Content = logContent});
+        }
+        private static void ProcessQueue()
+        {
+            while (!myLogQueue.IsCompleted)
+            {
+                try
+                {
+                    if (myLogQueue.TryTake(out LogMessage firstMsg, Timeout.Infinite)) // 阻塞式获取第一条数据
+                    {
+                        var batch = new List<LogMessage> { firstMsg };
+                        while (batch.Count < 1000 && myLogQueue.TryTake(out LogMessage nextMsg)) // 贪婪聚合，单次批处理上限 1000 条
+                        {
+                            batch.Add(nextMsg);
+                        }
+                        foreach (var group in batch.GroupBy(m => new { m.Directory, m.PreText })) // 按路径分组批量写入
+                        {
+                            WriteBatchSafe(group.Key.Directory, group.Key.PreText, group.Select(m => m.Content));
+                        }
+                    }
+                }
+                catch (Exception ex)
+                {
+                    Console.WriteLine($"写入异常: {ex.Message}");
+                }
+            }
+        }
+        private static void WriteBatchSafe(string customDir, string preText, IEnumerable<string> lines)
+        {
+            string currentPath = GetLogPath(customDir, preText);
+            using var fs = new FileStream(currentPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite);
+            using var sw = new StreamWriter(fs, Encoding.UTF8);
+            foreach (var line in lines)
+            {
+                sw.WriteLine(line);
+                // 每写入一条，简单估算。若大批量写入导致超限，则在此关闭并切换文件。
+                // 为了性能不建议每行都 Check FileInfo，采用写完一批后由下次 GetLogPath 修正
+            }
         }
         private static string GetLogPath(string customDirectory, string preText)
         {
-            string newFilePath = string.Empty;
-            string logDir = string.IsNullOrEmpty(customDirectory) ? Path.Combine(Environment.CurrentDirectory, "logs") : customDirectory;
-            if (!Directory.Exists(logDir))
-            {
-                Directory.CreateDirectory(logDir);
-            }
+            string logDir = string.IsNullOrEmpty(customDirectory) ? Path.Combine(AppDomain.CurrentDomain.BaseDirectory, "logs") : customDirectory; // 确定基础目录
+            if (!Directory.Exists(logDir)) Directory.CreateDirectory(logDir);
+            string dateStr = DateTime.Now.ToString("yyyyMMdd");
+            string fileNameNotExt = $"{preText}_{dateStr}";
             string extension = ".log";
-            string fileNameNotExt = preText + "_" + DateTime.Now.ToString("yyyyMMdd");
-            string fileName = string.Concat(fileNameNotExt, extension);
-            string fileNamePattern = string.Concat(fileNameNotExt, "(*)", extension);
-            List<string> filePaths = Directory.GetFiles(logDir, fileNamePattern, SearchOption.TopDirectoryOnly).ToList();
-
-            if (filePaths.Count > 0)
+            var files = Directory.GetFiles(logDir, fileNameNotExt + "(*)" + extension); // 获取该类型的所有分片文件
+            if (files.Length == 0)
             {
-                int fileMaxLen = filePaths.Max(d => d.Length);
-                string lastFilePath = filePaths.Where(d => d.Length == fileMaxLen).OrderByDescending(d => d).FirstOrDefault();
-                if (new FileInfo(lastFilePath).Length > 1 * 1024 * 1024)
-                {
-                    string no = new Regex(@"(?is)(?<=\()(.*)(?=\))").Match(Path.GetFileName(lastFilePath)).Value;
-                    bool parse = int.TryParse(no, out int tempno);
-                    string formatno = string.Format("({0})", parse ? (tempno + 1) : tempno);
-                    string newFileName = string.Concat(fileNameNotExt, formatno, extension);
-                    newFilePath = Path.Combine(logDir, newFileName);
-                }
-                else
-                {
-                    newFilePath = lastFilePath;
-                }
+                return Path.Combine(logDir, $"{fileNameNotExt}(0){extension}");
             }
-            else
+            var latestFile = files   // 解析编号 (n) 进行排序
+                .Select(f =>
+                {
+                    var match = _noRegex.Match(Path.GetFileName(f));
+                    return new { Path = f, No = match.Success ? int.Parse(match.Value) : -1 };
+                })
+                .OrderByDescending(x => x.No)
+                .First(); 
+            if (new FileInfo(latestFile.Path).Length >= MAX_FILE_SIZE)     // 检查该分片是否已满 
             {
-                string newFileName = string.Concat(fileNameNotExt, string.Format("({0})", 0), extension);
-                newFilePath = Path.Combine(logDir, newFileName);
+                return Path.Combine(logDir, $"{fileNameNotExt}({latestFile.No + 1}){extension}");
             }
-            return newFilePath;
-        }
-        private static void WriteText(string logContent)
-        {
-            using (FileStream fs = new FileStream(logPath, FileMode.Append, FileAccess.Write, FileShare.ReadWrite))
-            {
-                using (StreamWriter sw = new StreamWriter(fs, System.Text.Encoding.UTF8))
-                {
-                    sw.Write(logContent + "\r\n");
-                    sw.Flush();
-                    sw.Close();
-                }
-            }
-            //Console.WriteLine(logContent);
+            return latestFile.Path;
         }
     }
 }
